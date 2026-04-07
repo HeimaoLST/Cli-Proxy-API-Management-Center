@@ -1545,6 +1545,13 @@
     "name_placeholder": "например: claude-failover",
     "model_placeholder": "Название модели",
     "priority_placeholder": "Приоритет",
-    "add_model_button": "+ Добавить модель"
+    "add_model_button": "+ Добавить модель",
+    "field_tiers": "Уровни приоритета",
+    "add_tier_button": "+ Добавить уровень",
+    "tier_priority_label": "Приоритет",
+    "tier_add_model_button": "Добавить",
+    "load_balanced_badge": "Балансировка",
+    "fallback_badge": "Резерв",
+    "failover_label": "переключение"
   }
 }

@@ -10,25 +10,64 @@ import { Input } from '@/components/ui/Input';
 import { AutocompleteInput } from '@/components/ui/AutocompleteInput';
 import styles from './ModelGroupsPage.module.scss';
 
-interface ModelEntryDraft {
-  model: string;
+interface TierDraft {
+  uid: number;
   priority: string;
+  models: string[];
+  newModel: string;
 }
 
 interface EditState {
   open: boolean;
   original: ModelGroup | null;
   name: string;
-  entries: ModelEntryDraft[];
+  tiers: TierDraft[];
 }
 
-const EMPTY_ENTRY: ModelEntryDraft = { model: '', priority: '1' };
+let uidCounter = 0;
+const nextUid = () => ++uidCounter;
+
+function entriesToTiers(models: ModelGroupEntry[]): TierDraft[] {
+  const map = new Map<number, string[]>();
+  for (const m of models) {
+    const arr = map.get(m.priority) ?? [];
+    arr.push(m.model);
+    map.set(m.priority, arr);
+  }
+  return Array.from(map.entries())
+    .map(([p, ms]) => ({ uid: nextUid(), priority: String(p), models: ms, newModel: '' }))
+    .sort((a, b) => Number(b.priority) - Number(a.priority));
+}
+
+function tiersToEntries(tiers: TierDraft[]): ModelGroupEntry[] {
+  const result: ModelGroupEntry[] = [];
+  for (const tier of tiers) {
+    const p = parseInt(tier.priority, 10);
+    const priority = isNaN(p) || p < 1 ? 1 : p;
+    for (const model of tier.models) {
+      result.push({ model, priority });
+    }
+  }
+  return result;
+}
+
+function groupByPriority(models: ModelGroupEntry[]): { priority: number; models: string[] }[] {
+  const map = new Map<number, string[]>();
+  for (const m of models) {
+    const arr = map.get(m.priority) ?? [];
+    arr.push(m.model);
+    map.set(m.priority, arr);
+  }
+  return Array.from(map.entries())
+    .map(([priority, ms]) => ({ priority, models: ms }))
+    .sort((a, b) => b.priority - a.priority);
+}
 
 const EMPTY_EDIT: EditState = {
   open: false,
   original: null,
   name: '',
-  entries: [{ ...EMPTY_ENTRY }],
+  tiers: [],
 };
 
 export function ModelGroupsPage() {
@@ -59,41 +98,71 @@ export function ModelGroupsPage() {
   }, [t]);
 
   useHeaderRefresh(load);
+  useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const openNew = () =>
+    setEdit({
+      open: true,
+      original: null,
+      name: '',
+      tiers: [{ uid: nextUid(), priority: '2', models: [], newModel: '' }],
+    });
 
-  const openNew = () => {
-    setEdit({ ...EMPTY_EDIT, entries: [{ ...EMPTY_ENTRY }] });
-  };
-
-  const openEdit = (group: ModelGroup) => {
+  const openEdit = (group: ModelGroup) =>
     setEdit({
       open: true,
       original: group,
       name: group.name,
-      entries: group.models.length > 0
-        ? group.models.map((m) => ({ model: m.model, priority: String(m.priority) }))
-        : [{ ...EMPTY_ENTRY }],
+      tiers: group.models.length > 0
+        ? entriesToTiers(group.models)
+        : [{ uid: nextUid(), priority: '2', models: [], newModel: '' }],
     });
-  };
 
   const closeEdit = () => setEdit(EMPTY_EDIT);
 
-  const addEntry = () =>
-    setEdit((prev) => ({ ...prev, entries: [...prev.entries, { ...EMPTY_ENTRY }] }));
-
-  const removeEntry = (index: number) =>
+  const addTier = () => {
+    const maxPriority = edit.tiers.reduce((m, tier) => Math.max(m, parseInt(tier.priority, 10) || 0), 0);
     setEdit((prev) => ({
       ...prev,
-      entries: prev.entries.filter((_, i) => i !== index),
+      tiers: [
+        { uid: nextUid(), priority: String(maxPriority + 1), models: [], newModel: '' },
+        ...prev.tiers,
+      ],
+    }));
+  };
+
+  const removeTier = (uid: number) =>
+    setEdit((prev) => ({ ...prev, tiers: prev.tiers.filter((t) => t.uid !== uid) }));
+
+  const updateTierPriority = (uid: number, value: string) =>
+    setEdit((prev) => ({
+      ...prev,
+      tiers: prev.tiers.map((t) => (t.uid === uid ? { ...t, priority: value } : t)),
     }));
 
-  const updateEntry = (index: number, field: keyof ModelEntryDraft, value: string) =>
+  const updateTierNewModel = (uid: number, value: string) =>
     setEdit((prev) => ({
       ...prev,
-      entries: prev.entries.map((e, i) => (i === index ? { ...e, [field]: value } : e)),
+      tiers: prev.tiers.map((t) => (t.uid === uid ? { ...t, newModel: value } : t)),
+    }));
+
+  const addModelToTier = (uid: number) =>
+    setEdit((prev) => ({
+      ...prev,
+      tiers: prev.tiers.map((t) => {
+        if (t.uid !== uid) return t;
+        const model = t.newModel.trim();
+        if (!model || t.models.includes(model)) return { ...t, newModel: '' };
+        return { ...t, models: [...t.models, model], newModel: '' };
+      }),
+    }));
+
+  const removeModelFromTier = (uid: number, model: string) =>
+    setEdit((prev) => ({
+      ...prev,
+      tiers: prev.tiers.map((t) =>
+        t.uid === uid ? { ...t, models: t.models.filter((m) => m !== model) } : t
+      ),
     }));
 
   const handleSave = async () => {
@@ -102,20 +171,14 @@ export function ModelGroupsPage() {
       showNotification(t('model_groups.name_required'), 'warning');
       return;
     }
-    const models: ModelGroupEntry[] = edit.entries
-      .filter((e) => e.model.trim())
-      .map((e) => ({
-        model: e.model.trim(),
-        priority: parseInt(e.priority, 10) || 1,
-      }));
+    const models = tiersToEntries(edit.tiers);
     if (models.length === 0) {
       showNotification(t('model_groups.models_required'), 'warning');
       return;
     }
-    const value: ModelGroup = { name, models };
     setSaving(true);
     try {
-      await modelGroupsApi.upsert(value);
+      await modelGroupsApi.upsert({ name, models });
       showNotification(
         edit.original ? t('notification.model_group_updated') : t('notification.model_group_added'),
         'success'
@@ -149,14 +212,14 @@ export function ModelGroupsPage() {
     });
   };
 
+  const sortedEditTiers = [...edit.tiers].sort((a, b) => Number(b.priority) - Number(a.priority));
+
   return (
     <div className={styles.container}>
       <div className={styles.pageHeader}>
         <div className={styles.titleWrapper}>
           <h1 className={styles.pageTitle}>{t('model_groups.title')}</h1>
-          {!loading && (
-            <span className={styles.countBadge}>{groups.length}</span>
-          )}
+          {!loading && <span className={styles.countBadge}>{groups.length}</span>}
         </div>
         <p className={styles.description}>{t('model_groups.description')}</p>
       </div>
@@ -178,43 +241,51 @@ export function ModelGroupsPage() {
         </div>
       ) : (
         <div className={styles.grid}>
-          {groups.map((group) => (
-            <Card
-              key={group.name}
-              title={group.name}
-              extra={
-                <div className={styles.cardActions}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openEdit(group)}
-                    disabled={disabled}
-                  >
-                    {t('common.edit')}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => handleDelete(group)}
-                    disabled={disabled}
-                  >
-                    {t('common.delete')}
-                  </Button>
-                </div>
-              }
-            >
-              <div className={styles.modelList}>
-                {[...group.models]
-                  .sort((a, b) => b.priority - a.priority)
-                  .map((entry, idx) => (
-                    <div key={idx} className={styles.modelEntry}>
-                      <span className={styles.priorityBadge}>{entry.priority}</span>
-                      <span className={styles.modelName}>{entry.model}</span>
+          {groups.map((group) => {
+            const tiers = groupByPriority(group.models);
+            return (
+              <Card
+                key={group.name}
+                title={group.name}
+                extra={
+                  <div className={styles.cardActions}>
+                    <Button variant="secondary" size="sm" onClick={() => openEdit(group)} disabled={disabled}>
+                      {t('common.edit')}
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(group)} disabled={disabled}>
+                      {t('common.delete')}
+                    </Button>
+                  </div>
+                }
+              >
+                <div className={styles.tierList}>
+                  {tiers.map((tier, idx) => (
+                    <div key={tier.priority}>
+                      {idx > 0 && (
+                        <div className={styles.failoverArrow}>↓ {t('model_groups.failover_label')}</div>
+                      )}
+                      <div className={styles.cardTier}>
+                        <div className={styles.cardTierHeader}>
+                          <span className={styles.priorityBadge}>P{tier.priority}</span>
+                          {tier.models.length > 1 && (
+                            <span className={styles.lbBadge}>{t('model_groups.load_balanced_badge')}</span>
+                          )}
+                          {idx > 0 && (
+                            <span className={styles.fallbackBadge}>{t('model_groups.fallback_badge')}</span>
+                          )}
+                        </div>
+                        <div className={styles.cardChips}>
+                          {tier.models.map((m) => (
+                            <span key={m} className={styles.cardChip}>{m}</span>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   ))}
-              </div>
-            </Card>
-          ))}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -232,39 +303,74 @@ export function ModelGroupsPage() {
                 placeholder={t('model_groups.name_placeholder')}
                 disabled={!!edit.original}
               />
-              <div className={styles.entriesSection}>
-                <div className={styles.entriesLabel}>{t('model_groups.field_models')}</div>
-                {edit.entries.map((entry, idx) => (
-                  <div key={idx} className={styles.entryRow}>
-                    <div className={styles.entryModel}>
-                      <AutocompleteInput
-                        value={entry.model}
-                        onChange={(val) => updateEntry(idx, 'model', val)}
-                        options={availableModels}
-                        placeholder={t('model_groups.model_placeholder')}
-                      />
+              <div className={styles.tiersSection}>
+                <div className={styles.tiersSectionHeader}>
+                  <span className={styles.tiersLabel}>{t('model_groups.field_tiers')}</span>
+                  <Button variant="secondary" size="sm" onClick={addTier}>
+                    {t('model_groups.add_tier_button')}
+                  </Button>
+                </div>
+                {sortedEditTiers.map((tier, idx) => (
+                  <div key={tier.uid}>
+                    {idx > 0 && (
+                      <div className={styles.failoverArrow}>↓ {t('model_groups.failover_label')}</div>
+                    )}
+                    <div className={styles.tierCard}>
+                      <div className={styles.tierHeader}>
+                        <div className={styles.tierPriorityRow}>
+                          <span className={styles.tierPriorityLabel}>{t('model_groups.tier_priority_label')}</span>
+                          <input
+                            className={styles.tierPriorityInput}
+                            type="number"
+                            value={tier.priority}
+                            onChange={(e) => updateTierPriority(tier.uid, e.target.value)}
+                            min="1"
+                          />
+                          {tier.models.length > 1 && (
+                            <span className={styles.lbBadge}>{t('model_groups.load_balanced_badge')}</span>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeTier(tier.uid)}
+                          disabled={edit.tiers.length <= 1}
+                        >
+                          ×
+                        </Button>
+                      </div>
+                      {tier.models.length > 0 && (
+                        <div className={styles.modelChips}>
+                          {tier.models.map((m) => (
+                            <span key={m} className={styles.modelChip}>
+                              {m}
+                              <button
+                                className={styles.chipRemove}
+                                onClick={() => removeModelFromTier(tier.uid, m)}
+                                aria-label={`Remove ${m}`}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className={styles.tierAddRow}>
+                        <div className={styles.tierAddInput}>
+                          <AutocompleteInput
+                            value={tier.newModel}
+                            onChange={(val) => updateTierNewModel(tier.uid, val)}
+                            options={availableModels}
+                            placeholder={t('model_groups.model_placeholder')}
+                          />
+                        </div>
+                        <Button variant="secondary" size="sm" onClick={() => addModelToTier(tier.uid)}>
+                          {t('model_groups.tier_add_model_button')}
+                        </Button>
+                      </div>
                     </div>
-                    <div className={styles.entryPriority}>
-                      <Input
-                        value={entry.priority}
-                        onChange={(e) => updateEntry(idx, 'priority', e.target.value)}
-                        placeholder={t('model_groups.priority_placeholder')}
-                        type="number"
-                      />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeEntry(idx)}
-                      disabled={edit.entries.length <= 1}
-                    >
-                      ×
-                    </Button>
                   </div>
                 ))}
-                <Button variant="secondary" size="sm" onClick={addEntry}>
-                  {t('model_groups.add_model_button')}
-                </Button>
               </div>
             </div>
             <div className={styles.modalFooter}>

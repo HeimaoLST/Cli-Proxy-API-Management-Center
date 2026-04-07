@@ -1540,6 +1540,13 @@
     "name_placeholder": "例如：claude-failover",
     "model_placeholder": "模型名称",
     "priority_placeholder": "优先级",
-    "add_model_button": "+ 添加模型"
+    "add_model_button": "+ 添加模型",
+    "field_tiers": "优先级层级",
+    "add_tier_button": "+ 添加层级",
+    "tier_priority_label": "优先级",
+    "tier_add_model_button": "添加",
+    "load_balanced_badge": "负载均衡",
+    "fallback_badge": "备用",
+    "failover_label": "故障转移"
   }
 }

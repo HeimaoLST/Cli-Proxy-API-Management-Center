@@ -1540,6 +1540,13 @@
     "name_placeholder": "e.g. claude-failover",
     "model_placeholder": "Model name",
     "priority_placeholder": "Priority",
-    "add_model_button": "+ Add Model"
+    "add_model_button": "+ Add Model",
+    "field_tiers": "Priority Tiers",
+    "add_tier_button": "+ Add Tier",
+    "tier_priority_label": "Priority",
+    "tier_add_model_button": "Add",
+    "load_balanced_badge": "Load Balanced",
+    "fallback_badge": "Fallback",
+    "failover_label": "failover"
   }
 }
